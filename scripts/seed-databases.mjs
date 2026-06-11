@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import sqlite3 from 'sqlite3';
+import Database from 'better-sqlite3';
 import { faker } from '@faker-js/faker';
 
 const DATA_DIR = path.join(import.meta.dirname, '..', 'data');
@@ -14,33 +14,23 @@ const MOVIE_COUNT = 15;
 const WISHLIST_COUNT = 20;
 
 function openDatabase(filePath) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(filePath, (err) => {
-      if (err) reject(err);
-      else resolve(db);
-    });
-  });
+  return new Database(filePath);
 }
 
 function run(db, sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
-  });
+  const result = db.prepare(sql).run(...params);
+  return {
+    lastID: Number(result.lastInsertRowid),
+    changes: result.changes,
+  };
 }
 
 function exec(db, sql) {
-  return new Promise((resolve, reject) => {
-    db.exec(sql, (err) => (err ? reject(err) : resolve()));
-  });
+  db.exec(sql);
 }
 
 function close(db) {
-  return new Promise((resolve, reject) => {
-    db.close((err) => (err ? reject(err) : resolve()));
-  });
+  db.close();
 }
 
 function slugify(text) {
@@ -52,10 +42,6 @@ function slugify(text) {
     .replace(/^-+|-+$/g, '');
 }
 
-function isoNow() {
-  return new Date().toISOString();
-}
-
 function randomPastDate(daysAgoMax = 365) {
   const date = faker.date.past({ years: 1 });
   if (daysAgoMax < 365) {
@@ -65,12 +51,12 @@ function randomPastDate(daysAgoMax = 365) {
   return date;
 }
 
-async function setupCustomersDb() {
+function setupCustomersDb() {
   if (fs.existsSync(CUSTOMERS_DB)) fs.unlinkSync(CUSTOMERS_DB);
 
-  const db = await openDatabase(CUSTOMERS_DB);
+  const db = openDatabase(CUSTOMERS_DB);
 
-  await exec(
+  exec(
     db,
     `
     CREATE TABLE customers (
@@ -99,7 +85,7 @@ async function setupCustomersDb() {
       ? faker.date.between({ from: createdAt, to: new Date() }).toISOString()
       : null;
 
-    await run(db, insertSql, [
+    run(db, insertSql, [
       faker.person.fullName(),
       faker.string.numeric(11),
       faker.internet.email().toLowerCase(),
@@ -110,16 +96,16 @@ async function setupCustomersDb() {
     ]);
   }
 
-  await close(db);
+  close(db);
   console.log(`customers.db: ${CUSTOMER_COUNT} customers seeded.`);
 }
 
-async function setupMoviesDb(customerIds) {
+function setupMoviesDb(customerIds) {
   if (fs.existsSync(MOVIES_DB)) fs.unlinkSync(MOVIES_DB);
 
-  const db = await openDatabase(MOVIES_DB);
+  const db = openDatabase(MOVIES_DB);
 
-  await exec(
+  exec(
     db,
     `
     CREATE TABLE categories (
@@ -151,7 +137,7 @@ async function setupMoviesDb(customerIds) {
   const categoryIds = [];
 
   for (const name of categoryNames.slice(0, CATEGORY_COUNT)) {
-    const result = await run(db, 'INSERT INTO categories (name) VALUES (?)', [name]);
+    const result = run(db, 'INSERT INTO categories (name) VALUES (?)', [name]);
     categoryIds.push(result.lastID);
   }
 
@@ -169,7 +155,7 @@ async function setupMoviesDb(customerIds) {
     usedSlugs.add(slug);
 
     const categoryId = faker.helpers.arrayElement(categoryIds);
-    const result = await run(db, `
+    const result = run(db, `
       INSERT INTO movies (name, slug, description, category_id)
       VALUES (?, ?, ?, ?)
     `, [name, slug, faker.lorem.paragraph({ min: 2, max: 4 }), categoryId]);
@@ -191,7 +177,7 @@ async function setupMoviesDb(customerIds) {
     const createdAt = randomPastDate(90).toISOString();
     const updatedAt = faker.date.between({ from: createdAt, to: new Date() }).toISOString();
 
-    await run(
+    run(
       db,
       `
       INSERT INTO customer_wishlist (customer_id, movie_id, created_at, updated_at)
@@ -203,17 +189,17 @@ async function setupMoviesDb(customerIds) {
     inserted += 1;
   }
 
-  await close(db);
+  close(db);
   console.log(
     `movies.db: ${CATEGORY_COUNT} categories, ${MOVIE_COUNT} movies, ${WISHLIST_COUNT} wishlist items seeded.`
   );
 }
 
- async function setupLogsDb() {
+function setupLogsDb() {
   if (fs.existsSync(LOGS_DB)) fs.unlinkSync(LOGS_DB);
 
-  const db = await openDatabase(LOGS_DB);
-  await exec(db, `
+  const db = openDatabase(LOGS_DB);
+  exec(db, `
     CREATE TABLE logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       data TEXT NOT NULL,
@@ -221,34 +207,32 @@ async function setupMoviesDb(customerIds) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
- }
+  close(db);
+}
 
-async function getCustomerIds() {
-  const db = await openDatabase(CUSTOMERS_DB);
-  const rows = await new Promise((resolve, reject) => {
-    db.all('SELECT id FROM customers ORDER BY id', [], (err, result) => {
-      if (err) reject(err);
-      else resolve(result);
-    });
-  });
-  await close(db);
+function getCustomerIds() {
+  const db = openDatabase(CUSTOMERS_DB);
+  const rows = db.prepare('SELECT id FROM customers ORDER BY id').all();
+  close(db);
   return rows.map((row) => row.id);
 }
 
-async function main() {
+function main() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
   console.log('Seeding databases...');
-  await setupCustomersDb();
-  const customerIds = await getCustomerIds();
-  await setupMoviesDb(customerIds);
-  await setupLogsDb();
+  setupCustomersDb();
+  const customerIds = getCustomerIds();
+  setupMoviesDb(customerIds);
+  setupLogsDb();
   console.log('Done.');
   console.log(`  ${CUSTOMERS_DB}`);
   console.log(`  ${MOVIES_DB}`);
 }
 
-main().catch((err) => {
+try {
+  main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

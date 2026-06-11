@@ -6,8 +6,14 @@ Servidor MCP (Model Context Protocol) para consulta de dados de clientes, filmes
 
 ## Pré-requisitos
 
-- [Node.js](https://nodejs.org/) v18 ou superior
+- [Node.js](https://nodejs.org/) **v22.13.0 ou superior** (requerido pelo `better-sqlite3`)
 - npm
+
+Se você usa [nvm](https://github.com/nvm-sh/nvm), o projeto inclui um `.nvmrc`:
+
+```bash
+nvm use
+```
 
 ---
 
